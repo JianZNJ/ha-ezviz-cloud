@@ -7,10 +7,10 @@
 
 | 实体 | 说明 |
 |---|---|
-| `switch.ezviz_<序列号>_jing_tou_zhe_bi` | 镜头遮蔽开/关 |
-| `button.ezviz_<序列号>_yun_tai_shang` 等 4 个 | 云台上/下/左/右，按一次转一下 |
-| `number.ezviz_<序列号>_yun_tai_shi_chang` | 转动时长 50–5000ms（默认 300） |
-| `number.ezviz_<序列号>_yun_tai_su_du` | 速度 1–10（默认 5） |
+| `switch.ezviz_f96569902_jing_tou_zhe_bi` | 镜头遮蔽开/关 |
+| `button.ezviz_f96569902_yun_tai_shang` 等 4 个 | 云台上/下/左/右，按一次转一下 |
+| `number.ezviz_f96569902_yun_tai_shi_chang` | 转动时长 50–5000ms（默认 300） |
+| `number.ezviz_f96569902_yun_tai_su_du` | 速度 1–10（默认 5） |
 
 实体名随实际 slug 变化，以开发者工具里看到的为准。
 
@@ -23,7 +23,7 @@
 
 - 账号：`mdskiw`（或手机号）
 - 密码：萤石 App 密码
-- 序列号：`<序列号>`
+- 序列号：`F96569902`
 - token：可选。把 `ezviz_local/token.json` 的内容整段粘进去，就**跳过短信验证**；
   留空则首次配置会发短信验证码，在下一步填。
 
@@ -39,7 +39,7 @@ automation:
     action:
       - service: switch.turn_on
         target:
-          entity_id: switch.ezviz_<序列号>_jing_tou_zhe_bi
+          entity_id: switch.ezviz_f96569902_jing_tou_zhe_bi
 
   - alias: 离家解除遮蔽
     trigger:
@@ -49,7 +49,7 @@ automation:
     action:
       - service: switch.turn_off
         target:
-          entity_id: switch.ezviz_<序列号>_jing_tou_zhe_bi
+          entity_id: switch.ezviz_f96569902_jing_tou_zhe_bi
 ```
 
 云台按键可以直接挂到仪表盘，或用服务：

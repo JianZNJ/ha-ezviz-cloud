@@ -27,6 +27,10 @@ class EzvizCloudAuthError(EzvizCloudError):
     """Wrong credentials / login rejected."""
 
 
+class EzvizCloudReauthRequired(EzvizCloudAuthError):
+    """Saved session is gone and only a human can supply an SMS code."""
+
+
 class EzvizCloudMfaRequired(EzvizCloudError):
     """Account has SMS MFA enabled; client kept for the second step."""
 
@@ -44,9 +48,13 @@ class EzvizCloudApi:
         password: str,
         serial: str,
         token: dict[str, Any] | None = None,
+        allow_password_login: bool = False,
     ) -> None:
         self.account = account
         self.serial = serial
+        # 后台绝不允许触发密码登录：萤石对密码登录一律回 MFA，每次尝试都会真的
+        # 给账号发一条短信。只有 config_flow（用户在场）才把密码交给客户端。
+        self.allow_password_login = allow_password_login
         self._password = password
         self._client: EzvizClient | None = None
         self._token = token
@@ -57,7 +65,7 @@ class EzvizCloudApi:
         if self._client is None:
             self._client = EzvizClient(
                 self.account,
-                self._password or None,
+                (self._password or None) if self.allow_password_login else None,
                 url=API_HOST,
                 token=self._token,
             )
@@ -101,21 +109,32 @@ class EzvizCloudApi:
 
         已有 session 时不做主动刷新：萤石会话有效期很长，由调用失败时的
         _call_with_retry 兜底重登，避免每次启动都撞 /apigateway/login。
+
+        没有 session 时不发密码登录（那会立刻触发短信），而是抛
+        EzvizCloudReauthRequired 让 HA 把条目标成「需要重新认证」。
         """
         if not self.token.get("session_id"):
-            self.login()
+            raise EzvizCloudReauthRequired("没有可用的会话，需要重新认证")
 
     def _call_with_retry(self, func, *args, **kwargs):
-        """Run a cloud call; on auth-ish failure refresh once and retry."""
+        """Run a cloud call; on auth-ish failure refresh the session once, then retry.
+
+        失败重试只用 refreshSessionId 续期。续期失败时客户端没有密码，pyezviz
+        会抛 EzvizAuthTokenExpired / HTTPError 而不是转成密码登录 —— 这样后台
+        永远不会发短信。真需要重新登录时抛 EzvizCloudReauthRequired。
+        """
         self.ensure_login()
         try:
             return func(*args, **kwargs)
-        except EzvizCloudMfaRequired:
-            raise
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("调用失败，尝试重新登录: %s", err)
+            _LOGGER.debug("调用失败，尝试刷新会话: %s", err)
             self._client = None
-            self.login()
+            try:
+                self.client().login()
+            except EzvizAuthVerificationCode as err2:
+                raise EzvizCloudReauthRequired("会话失效且账号需要短信验证") from err2
+            except (PyEzvizError, ValueError) as err2:
+                raise EzvizCloudReauthRequired(f"会话刷新失败: {err2}") from err2
             return func(*args, **kwargs)
 
     # -- data -------------------------------------------------------------

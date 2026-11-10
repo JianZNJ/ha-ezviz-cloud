@@ -9,9 +9,15 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
 
-from .api import EzvizCloudApi, EzvizCloudAuthError, EzvizCloudError
+from .api import (
+    EzvizCloudApi,
+    EzvizCloudAuthError,
+    EzvizCloudError,
+    EzvizCloudReauthRequired,
+)
 from .const import (
     CONF_ACCOUNT,
     CONF_PASSWORD,
@@ -85,8 +91,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await hass.async_add_executor_job(api.ensure_login)
+    except EzvizCloudReauthRequired as err:
+        # 交给 HA 触发 reauth 流程，用户填一次短信验证码即可；绝不后台自动发短信。
+        raise ConfigEntryAuthFailed(str(err)) from err
     except (EzvizCloudAuthError, EzvizCloudError) as err:
-        _LOGGER.error("EZVIZ 登录失败: %s", err)
+        _LOGGER.error("EZVIZ 会话不可用: %s", err)
         return False
 
     await _store_token(hass, entry, api)

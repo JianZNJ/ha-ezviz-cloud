@@ -17,6 +17,14 @@
         "data": {
           "sms_code": "短信验证码"
         }
+      },
+      "reauth_confirm": {
+        "title": "重新认证 EZVIZ",
+        "description": "账号 {account} 的云端会话已失效。填密码走一次短信验证，或直接粘贴 token JSON 跳过短信。",
+        "data": {
+          "password": "密码（留空则沿用已保存的）",
+          "token": "token JSON（可选，优先于密码）"
+        }
       }
     },
     "error": {
@@ -27,7 +35,8 @@
       "sms_failed": "短信发送失败（多为发送过于频繁），请等 1 分钟返回上一步重试"
     },
     "abort": {
-      "already_configured": "该设备已经配置过了"
+      "already_configured": "该设备已经配置过了",
+      "reauth_successful": "重新认证成功"
     }
   }
 }
