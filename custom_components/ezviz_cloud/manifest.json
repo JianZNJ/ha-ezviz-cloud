@@ -1,0 +1,13 @@
+{
+  "domain": "ezviz_cloud",
+  "name": "EZVIZ Cloud (CN)",
+  "codeowners": [
+    "@JianZNJ"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/JianZNJ/ha-ezviz-cloud",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/JianZNJ/ha-ezviz-cloud/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "EZVIZ Cloud (CN)",
+  "render_readme": true,
+  "homeassistant": "2026.11.0",
+  "zip_release": false,
+  "domains": [
+    "ezviz_cloud"
+  ]
+}

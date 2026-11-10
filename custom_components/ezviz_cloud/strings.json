@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EZVIZ 账号（国内）",
+        "description": "用萤石 App 的账号/密码，主机固定为 {host}。若已有一段可用的 token JSON，可粘到 token 里跳过短信验证。",
+        "data": {
+          "account": "账号（手机号或用户名）",
+          "password": "密码",
+          "serial": "设备序列号",
+          "token": "已有 token JSON（可选）"
+        }
+      },
+      "mfa": {
+        "title": "短信验证",
+        "description": "账号 {account} 开启了短信验证，验证码已发送到绑定的手机。输入短信里的 6 位数字验证码（不是账号密码）。",
+        "data": {
+          "sms_code": "短信验证码"
+        }
+      }
+    },
+    "error": {
+      "auth": "账号或密码不对",
+      "cannot_connect": "连不上萤石服务器",
+      "invalid_mfa": "验证码不对或已过期",
+      "invalid_token": "token JSON 格式不对",
+      "sms_failed": "短信发送失败（多为发送过于频繁），请等 1 分钟返回上一步重试"
+    },
+    "abort": {
+      "already_configured": "该设备已经配置过了"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+EZVIZ Cloud (CN) for Home Assistant
+Copyright 2026 JianZNJ
+
+This product bundles a modified copy of pyezvizapi at
+custom_components/ezviz_cloud/pyezvizapi/, taken from the China-region fork
+embedded in https://github.com/liuzexier/ezviz_cn (branch of the pyezviz
+client by Renier Moorlag, https://github.com/RenierMoorlag/pyezviz).
+
+Upstream pyezviz is distributed under the Apache License, Version 2.0
+(see its PyPI metadata), so the bundled copy keeps that license.
+The Home Assistant integration code outside pyezvizapi/ is likewise
+licensed under the Apache License, Version 2.0.
