@@ -59,6 +59,10 @@ class EzvizCloudApi:
         self._client: EzvizClient | None = None
         self._token = token
         self._last_refresh = 0.0
+        # 会话被云端续期后 token 会变（rf_session_id 轮换）。回调把新 token 写回
+        # config entry，否则 HA 重启后拿旧 rf_session_id 续期必然 500。
+        self.on_token_update = None
+        self._reported_token = dict(token or {})
 
     # -- auth -------------------------------------------------------------
     def client(self) -> EzvizClient:
@@ -116,29 +120,66 @@ class EzvizCloudApi:
         if not self.token.get("session_id"):
             raise EzvizCloudReauthRequired("没有可用的会话，需要重新认证")
 
-    def _call_with_retry(self, func, *args, **kwargs):
-        """Run a cloud call; on auth-ish failure refresh the session once, then retry.
-
-        失败重试只用 refreshSessionId 续期。续期失败时客户端没有密码，pyezviz
-        会抛 EzvizAuthTokenExpired / HTTPError 而不是转成密码登录 —— 这样后台
-        永远不会发短信。真需要重新登录时抛 EzvizCloudReauthRequired。
-        """
-        self.ensure_login()
+    def _notify_token(self) -> None:
+        """把云端轮换后的 token 交给上层持久化（异步回调，失败不影响调用）。"""
+        tok = self.token
+        if tok == self._reported_token:
+            return
+        self._reported_token = dict(tok)
+        if self.on_token_update is None:
+            return
         try:
-            return func(*args, **kwargs)
+            self.on_token_update(tok)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("持久化 token 失败:\n%s", traceback.format_exc())
+
+    def _refresh_session(self) -> bool:
+        """尽力续期；失败只是返回 False，绝不动现有会话。
+
+        萤石 /v3/apigateway/login 经常整段时间返回 500（服务端故障），此时
+        session_id 本身往往仍然有效，丢掉客户端改用密码登录只会触发短信。
+        """
+        try:
+            self.client().login()
+        except EzvizAuthVerificationCode:
+            _LOGGER.debug("续期需要短信验证码，保留现有会话")
+            return False
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("调用失败，尝试刷新会话: %s", err)
-            self._client = None
+            _LOGGER.debug("会话续期失败（保留现有会话）: %s", err)
+            return False
+        self._notify_token()
+        return True
+
+    def _call_with_retry(self, func, *args, **kwargs):
+        """调用云接口，失败时重试 + 尽力续期；续期失败也不丢会话。"""
+        self.ensure_login()
+        last: Exception | None = None
+        for attempt in range(3):
             try:
-                self.client().login()
-            except EzvizAuthVerificationCode as err2:
-                raise EzvizCloudReauthRequired("会话失效且账号需要短信验证") from err2
-            except (PyEzvizError, ValueError) as err2:
-                raise EzvizCloudReauthRequired(f"会话刷新失败: {err2}") from err2
-            return func(*args, **kwargs)
+                return func(*args, **kwargs)
+            except Exception as err:  # noqa: BLE001
+                last = err
+                _LOGGER.debug("云调用失败（第 %s/3 次）: %s", attempt + 1, err)
+                if attempt == 0:
+                    self._refresh_session()
+                time.sleep(0.8 * (attempt + 1))
+        # 最后一次机会：续期成功后再试一遍
+        if self._refresh_session():
+            try:
+                return func(*args, **kwargs)
+            except Exception as err:  # noqa: BLE001
+                last = err
+        text = str(last or "")
+        if any(k in text for k in ("401", "403", "身份", "session", "认证")):
+            raise EzvizCloudReauthRequired(f"会话已失效: {text}") from last
+        raise EzvizCloudError(f"云接口调用失败: {text}") from last
 
     # -- data -------------------------------------------------------------
     def status(self) -> dict[str, Any]:
+        now = time.time()
+        if now - self._last_refresh > 1800:
+            self._last_refresh = now
+            self._refresh_session()
         cl = self.client()
         info = self._call_with_retry(cl.get_device_infos, self.serial)
         switches = {

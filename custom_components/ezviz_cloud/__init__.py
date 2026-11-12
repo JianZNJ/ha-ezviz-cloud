@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -88,6 +89,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         serial=entry.data[CONF_SERIAL],
         token=entry.data.get(CONF_TOKEN),
     )
+
+    # 云端续期会轮换 rf_session_id：把新 token 写回条目，避免重启后拿旧
+    # refreshSessionId 续期（萤石对该情况直接返回 500）。
+    def _persist_token(tok: dict[str, Any]) -> None:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_TOKEN: tok}
+        )
+
+    def _on_token_update(tok: dict[str, Any]) -> None:
+        hass.loop.call_soon_threadsafe(_persist_token, tok)
+
+    api.on_token_update = _on_token_update
 
     try:
         await hass.async_add_executor_job(api.ensure_login)
