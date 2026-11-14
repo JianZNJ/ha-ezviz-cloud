@@ -38,5 +38,16 @@
       "already_configured": "该设备已经配置过了",
       "reauth_successful": "重新认证成功"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EZVIZ 集成选项",
+        "description": "萤石续期接口（/v3/apigateway/login）近期整段返回 500，会话到期后无法靠 refresh 续命。开启后集成会在认证失败时用保存的密码重新登录（限 1 次/6 小时，遇短信验证立即停止）。关闭则只能手动运行 relogin.py 或重新认证。",
+        "data": {
+          "auto_relogin": "续期失败时自动用密码登录（限频）"
+        }
+      }
+    }
   }
 }

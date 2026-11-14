@@ -10,6 +10,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .api import (
     EzvizCloudApi,
@@ -40,8 +41,29 @@ REAUTH_SCHEMA = vol.Schema(
 )
 
 
+class EzvizCloudOptionsFlow(config_entries.OptionsFlow):
+    """集成选项：是否允许续期接口故障时自动密码登录。"""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        current = self.config_entry.options.get("auto_relogin", True)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {vol.Optional("auto_relogin", default=current): cv.boolean}
+            ),
+        )
+
+
 class EzvizCloudConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        return EzvizCloudOptionsFlow()
 
     def __init__(self) -> None:
         self._api: EzvizCloudApi | None = None

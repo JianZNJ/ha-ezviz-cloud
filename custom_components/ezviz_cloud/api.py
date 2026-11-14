@@ -59,6 +59,9 @@ class EzvizCloudApi:
         self._client: EzvizClient | None = None
         self._token = token
         self._last_refresh = 0.0
+        # 密码登录兜底节流：萤石 /apigateway/login 常年 500 时，会话只能靠
+        # 重新密码登录续命；限 1 次/6 小时，避免 MFA 触发短信轰炸。
+        self._last_password_login = 0.0
         # 会话被云端续期后 token 会变（rf_session_id 轮换）。回调把新 token 写回
         # config entry，否则 HA 重启后拿旧 rf_session_id 续期必然 500。
         self.on_token_update = None
@@ -67,9 +70,11 @@ class EzvizCloudApi:
     # -- auth -------------------------------------------------------------
     def client(self) -> EzvizClient:
         if self._client is None:
+            # 主客户端绝不带密码：pyezvizapi 的 login() 在续期失败时会退化成
+            # 密码登录（发短信、且可能把 _token 写成 None），只能单独建临时客户端。
             self._client = EzvizClient(
                 self.account,
-                (self._password or None) if self.allow_password_login else None,
+                None,
                 url=API_HOST,
                 token=self._token,
             )
@@ -77,9 +82,11 @@ class EzvizCloudApi:
 
     @property
     def token(self) -> dict[str, Any]:
-        if self._client is None:
-            return self._token or {}
-        return dict(getattr(self._client, "_token", {}) or {})
+        if self._client is not None:
+            tok = dict(getattr(self._client, "_token", {}) or {})
+            if tok.get("session_id"):
+                return tok
+        return self._token or {}
 
     def login(self, sms_code: str | None = None) -> None:
         """Full login. Raises EzvizCloudMfaRequired when a code is needed."""
@@ -118,6 +125,10 @@ class EzvizCloudApi:
         EzvizCloudReauthRequired 让 HA 把条目标成「需要重新认证」。
         """
         if not self.token.get("session_id"):
+            # 没有会话时尝试一次受限密码登录（默认 6h 内最多一次），
+            # 成功就继续，失败才让 HA 走重新认证。
+            if self._password_login_limited():
+                return
             raise EzvizCloudReauthRequired("没有可用的会话，需要重新认证")
 
     def _notify_token(self) -> None:
@@ -133,20 +144,55 @@ class EzvizCloudApi:
         except Exception:  # noqa: BLE001
             _LOGGER.debug("持久化 token 失败:\n%s", traceback.format_exc())
 
+    def _password_login_limited(self, *, min_interval: float = 6 * 3600) -> bool:
+        """受限的密码登录兜底；不让后台无限重试，避免触发短信验证。"""
+        if not self.allow_password_login or not self._password:
+            return False
+        now = time.time()
+        if now - self._last_password_login < min_interval:
+            _LOGGER.debug("密码登录兜底仍在冷却期，跳过")
+            return False
+        self._last_password_login = now
+        try:
+            cl = EzvizClient(self.account, self._password, url=API_HOST)
+            cl.login()
+        except EzvizAuthVerificationCode:
+            _LOGGER.warning("密码登录要求短信验证码，已停止自动兜底；请人工重新认证")
+            return False
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("密码登录兜底失败: %s", err)
+            return False
+        # 换回不带密码的客户端，避免后续 login() 再走密码路径
+        self._client = EzvizClient(
+            self.account, None, url=API_HOST, token=dict(getattr(cl, "_token", {}) or {})
+        )
+        self._notify_token()
+        _LOGGER.info("会话已通过密码登录自动续期")
+        return True
+
     def _refresh_session(self) -> bool:
         """尽力续期；失败只是返回 False，绝不动现有会话。
 
         萤石 /v3/apigateway/login 经常整段时间返回 500（服务端故障），此时
         session_id 本身往往仍然有效，丢掉客户端改用密码登录只会触发短信。
         """
+        cl = self.client()
+        before = dict(getattr(cl, "_token", {}) or {})
         try:
-            self.client().login()
+            cl.login()
         except EzvizAuthVerificationCode:
             _LOGGER.debug("续期需要短信验证码，保留现有会话")
             return False
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("会话续期失败（保留现有会话）: %s", err)
             return False
+        after = dict(getattr(cl, "_token", {}) or {})
+        if not after.get("session_id"):
+            # 萤石续期接口 500 时 pyezvizapi 会把 _token 覆盖成全 None，必须回滚
+            cl._token = before
+            _LOGGER.debug("续期返回了空 token，已回滚，保留现有会话")
+            return False
+        self._token = after
         self._notify_token()
         return True
 
@@ -170,7 +216,17 @@ class EzvizCloudApi:
             except Exception as err:  # noqa: BLE001
                 last = err
         text = str(last or "")
-        if any(k in text for k in ("401", "403", "身份", "session", "认证")):
+        if "apigateway/login" in text or any(
+            k in text for k in ("401", "403", "身份", "session", "认证")
+        ):
+            # 续期接口 500 时 session 只能靠重新密码登录续命（历史上会持续数天）
+            if self._password_login_limited():
+                try:
+                    return func(*args, **kwargs)
+                except Exception as err:  # noqa: BLE001
+                    last = err
+                    text = str(err)
+        if any(k in text for k in ("401", "403", "身份", "session", "认证", "apigateway/login")):
             raise EzvizCloudReauthRequired(f"会话已失效: {text}") from last
         raise EzvizCloudError(f"云接口调用失败: {text}") from last
 
@@ -180,8 +236,7 @@ class EzvizCloudApi:
         if now - self._last_refresh > 1800:
             self._last_refresh = now
             self._refresh_session()
-        cl = self.client()
-        info = self._call_with_retry(cl.get_device_infos, self.serial)
+        info = self._call_with_retry(self._get_device_infos)
         switches = {
             str(item.get("type")): bool(item.get("enable"))
             for item in (info.get("SWITCH") or [])
@@ -192,34 +247,37 @@ class EzvizCloudApi:
             "privacyStatus": (info.get("STATUS") or {}).get("privacyStatus"),
         }
 
-    def set_privacy(self, enable: bool) -> None:
-        cl = self.client()
-        resp = self._call_with_retry(
-            cl.device_switch,
-            self.serial,
-            PRIVACY_CHANNEL,
-            1 if enable else 0,
-            PRIVACY_SWITCH_TYPE,
+    def _get_device_infos(self) -> dict[str, Any]:
+        return self.client().get_device_infos(self.serial)
+
+    def _device_switch(self, value: int, switch_type: int) -> dict[str, Any]:
+        return self.client().device_switch(
+            self.serial, PRIVACY_CHANNEL, value, switch_type
         )
+
+    def set_privacy(self, enable: bool) -> None:
+        resp = self._call_with_retry(self._device_switch, 1 if enable else 0, PRIVACY_SWITCH_TYPE)
         code = (resp.get("meta") or {}).get("code")
         if code != 200:
             raise EzvizCloudError(f"遮蔽切换失败: {resp.get('meta')}")
 
     # -- ptz --------------------------------------------------------------
+    def _ptz_control(self, direction: str, serial: str, action: str, speed: int) -> None:
+        return self.client().ptz_control(direction, serial, action, speed)
+
     def ptz(self, direction: str, ms: int = 300, speed: int = 5) -> None:
         d = direction.lower()
         if d not in ("up", "down", "left", "right"):
             raise EzvizCloudError(f"不支持的方向: {direction}")
         speed = max(1, min(int(speed), 10))
         ms = max(50, min(int(ms), 5000))
-        cl = self.client()
-        self._call_with_retry(cl.ptz_control, d.upper(), self.serial, "START", speed)
+        self._call_with_retry(self._ptz_control, d.upper(), self.serial, "START", speed)
         try:
             time.sleep(ms / 1000)
         finally:
             for attempt in (1, 2, 3):
                 try:
-                    cl.ptz_control(d.upper(), self.serial, "STOP", speed)
+                    self.client().ptz_control(d.upper(), self.serial, "STOP", speed)
                     break
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning("PTZ STOP 第 %s 次失败", attempt)

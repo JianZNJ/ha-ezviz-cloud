@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     PTZ_DIRECTIONS,
 )
+from . import notify
 from .coordinator import EzvizCoordinator
 from .settings import PtzSettings
 
@@ -83,11 +84,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    _dbg_tok = entry.data.get(CONF_TOKEN) or {}
     api = EzvizCloudApi(
         account=entry.data[CONF_ACCOUNT],
         password=entry.data[CONF_PASSWORD],
         serial=entry.data[CONF_SERIAL],
         token=entry.data.get(CONF_TOKEN),
+        # 续期接口 500 时用受限密码登录兜底；默认开，可在集成选项里关掉。
+        allow_password_login=bool(entry.options.get("auto_relogin", True)),
     )
 
     # 云端续期会轮换 rf_session_id：把新 token 写回条目，避免重启后拿旧
@@ -105,16 +109,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await hass.async_add_executor_job(api.ensure_login)
     except EzvizCloudReauthRequired as err:
-        # 交给 HA 触发 reauth 流程，用户填一次短信验证码即可；绝不后台自动发短信。
+        # 交给 HA 触发 reauth 流程；绝不后台自动发短信。
+        notify.async_notify(
+            hass,
+            entry.entry_id,
+            (
+                "保存的会话已不可用且无法续期，需要重新认证。\n\n"
+                f"`{err}`\n\n"
+                "运行 `ezviz_local/relogin.py` 可自动完成（密码登录换 token），"
+                "或到「设置 → 设备与服务」点该集成的「重新认证」。"
+            ),
+        )
         raise ConfigEntryAuthFailed(str(err)) from err
     except (EzvizCloudAuthError, EzvizCloudError) as err:
         _LOGGER.error("EZVIZ 会话不可用: %s", err)
+        notify.async_notify(
+            hass,
+            entry.entry_id,
+            f"集成启动失败：\n\n`{err}`\n\nHA 会自动重试；恢复后本通知会消失。",
+        )
         return False
 
     await _store_token(hass, entry, api)
 
     coordinator = EzvizCoordinator(hass, api)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed as err:
+        notify.async_notify(
+            hass,
+            entry.entry_id,
+            (
+                "会话已失效且无法续期，HA 已创建「重新认证」修复项，但侧边栏不会弹提示。\n\n"
+                f"`{err}`\n\n"
+                "恢复：运行 `ezviz_local/relogin.py`（密码登录换 token 后自动提交），"
+                "或到「设置 → 设备与服务」点该集成「重新认证」。"
+            ),
+        )
+        raise
+    except Exception as err:  # noqa: BLE001
+        notify.async_notify(
+            hass,
+            entry.entry_id,
+            f"首次拉取失败：\n\n`{err}`\n\nHA 会自动重试；恢复后本通知会消失。",
+        )
+        raise
+    notify.async_dismiss(hass, entry.entry_id)
+    notify.async_dismiss(hass, api.serial)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": api,

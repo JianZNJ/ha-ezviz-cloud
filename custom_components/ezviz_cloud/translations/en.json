@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EZVIZ 账号（国内）",
+        "description": "用萤石 App 的账号/密码，主机固定为 {host}。若已有一段可用的 token JSON，可粘到 token 里跳过短信验证。",
+        "data": {
+          "account": "账号（手机号或用户名）",
+          "password": "密码",
+          "serial": "设备序列号",
+          "token": "已有 token JSON（可选）"
+        }
+      },
+      "mfa": {
+        "title": "短信验证",
+        "description": "账号 {account} 开启了短信验证，验证码已发送到绑定的手机。输入短信里的 6 位数字验证码（不是账号密码）。",
+        "data": {
+          "sms_code": "短信验证码"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新认证 EZVIZ",
+        "description": "账号 {account} 的云端会话已失效。填密码走一次短信验证，或直接粘贴 token JSON 跳过短信。",
+        "data": {
+          "password": "密码（留空则沿用已保存的）",
+          "token": "token JSON（可选，优先于密码）"
+        }
+      }
+    },
+    "error": {
+      "auth": "账号或密码不对",
+      "cannot_connect": "连不上萤石服务器",
+      "invalid_mfa": "验证码不对或已过期",
+      "invalid_token": "token JSON 格式不对",
+      "sms_failed": "短信发送失败（多为发送过于频繁），请等 1 分钟返回上一步重试"
+    },
+    "abort": {
+      "already_configured": "该设备已经配置过了",
+      "reauth_successful": "重新认证成功"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EZVIZ options",
+        "description": "The EZVIZ refresh endpoint (/v3/apigateway/login) currently returns HTTP 500, so an expired session cannot be renewed. When enabled, the integration re-logs-in with the saved password (at most once per 6 hours, and it stops immediately if SMS verification is required). When disabled, use relogin.py or re-authenticate manually.",
+        "data": {
+          "auto_relogin": "Automatically sign in with password when refresh fails"
+        }
+      }
+    }
+  }
+}
